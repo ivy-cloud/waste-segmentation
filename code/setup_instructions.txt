@@ -1,0 +1,14 @@
+conda create -n pytorch python=3.7
+
+conda activate pytorch
+
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+conda env list
+
+Downloading https://ultralytics.com/assets/Arial.ttf to the Ultralytics AppData folder...
+
+If you see the message above, Ultralytics is trying to download a font config file.
+That download can time out. Manually copy Arial.ttf from this code folder to:
+%APPDATA%\Ultralytics\Arial.ttf
+Create the Ultralytics folder yourself if it does not exist.

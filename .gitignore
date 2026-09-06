@@ -1,0 +1,28 @@
+# Secrets
+.env
+!.env.example
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# IDE / OS
+.idea/
+.DS_Store
+
+# YOLO / training artifacts
+*.cache
+*.tfevents.*
+
+# Official pretrained weights (downloadable from Ultralytics)
+code/yolo11n.pt
+code/yolo11n-seg.pt
+code/yolo11s-seg.pt
+code/weights/*.pt
+
+# Duplicate training checkpoints
+**/last.pt
