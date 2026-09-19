@@ -1,18 +1,26 @@
 import random
+import sys
 import tempfile
 import time
 import os
+from pathlib import Path
+
 import cv2
 import numpy as np
 import streamlit as st
+
+_CODE_DIR = str(Path(__file__).resolve().parent)
+if _CODE_DIR not in sys.path:
+    sys.path.insert(0, _CODE_DIR)
 from QtFusion.path import abs_path
 from QtFusion.utils import drawRectBox
 
 from log import ResultLogger, LogTable
 from model import Web_Detector
-from chinese_name_list import Label_list
+from class_name_list import Label_list
 from ui_style import def_css_hitml
 from utils import save_uploaded_file, concat_results, load_default_image, get_camera_names
+from report_generator import build_report_input, generate_waste_report
 import tempfile
 from PIL import ImageFont, ImageDraw, Image
 from datetime import datetime
@@ -21,11 +29,13 @@ import numpy as np
 import cv2
 from hashlib import md5
 
+DEFAULT_WEIGHTS = abs_path("runs/segment/train5/weights/best.pt", path_type="current")
+
 def calculate_polygon_area(points):
     # Compute polygon area.
     return cv2.contourArea(points.astype(np.float32))
 
-def draw_with_chinese(img, text, position, font_size):
+def draw_label(img, text, position, font_size):
     # Draw text on an image.
     # Implementation can be adjusted as needed.
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -41,7 +51,7 @@ def generate_color_based_on_name(name):
     r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
     return (b, g, r)  # OpenCV uses BGR
 
-def draw_with_chinese(image, text, position, font_size=20, color=(255, 0, 0)):
+def draw_label(image, text, position, font_size=20, color=(255, 0, 0)):
     """
     Draw text on an OpenCV image using a TrueType font.
     """
@@ -73,7 +83,7 @@ def draw_detections(image, info, alpha=0.2):
         x1, y1, x2, y2 = bbox
         aim_frame_area = (x2 - x1) * (y2 - y1)
         cv2.rectangle(image, (x1, y1), (x2, y2), color=(0, 0, 255), thickness=int(3 * adjust_param))
-        image = draw_with_chinese(image, name, (x1, y1 - int(30 * adjust_param)), font_size=int(35 * adjust_param))
+        image = draw_label(image, name, (x1, y1 - int(30 * adjust_param)), font_size=int(35 * adjust_param))
         y_offset = int(50 * adjust_param)  # Draw the class name above; leave space below
     else:
         mask_points = np.concatenate(mask)
@@ -100,14 +110,14 @@ def draw_detections(image, info, alpha=0.2):
 
             # Draw the class name
             x, y = np.min(mask_points, axis=0).astype(int)
-            image = draw_with_chinese(image, name, (x, y - int(30 * adjust_param)), font_size=int(35 * adjust_param))
+            image = draw_label(image, name, (x, y - int(30 * adjust_param)), font_size=int(35 * adjust_param))
             y_offset = int(50 * adjust_param)  # Draw the class name above; leave space below
 
             # Draw area, perimeter, circularity, and color
             # metrics = [("Area", area), ("Perimeter", perimeter), ("Circularity", circularity), ("Color", color_str)]
             # for idx, (metric_name, metric_value) in enumerate(metrics):
             #     text = f"{metric_name}: {metric_value}"
-            #     image = draw_with_chinese(image, text, (x, y - y_offset - spacing * (idx + 1)),
+            #     image = draw_label(image, text, (x, y - y_offset - spacing * (idx + 1)),
             #                               font_size=int(35 * adjust_param))
 
         except Exception as e:
@@ -132,7 +142,7 @@ def format_time(seconds):
 
 
 
-def save_chinese_image(file_path, image_array):
+def save_image(file_path, image_array):
     """
     Save an image that may contain Unicode characters in the path.
 
@@ -222,6 +232,8 @@ class Detection_UI:
         # Create a LogTable in session state if missing
         if 'logTable' not in st.session_state:
             st.session_state['logTable'] = LogTable(self.saved_log_data)
+        st.session_state.setdefault("class_counts", {})
+        st.session_state.setdefault("waste_report", None)
 
         # Get or update the available camera list
         if 'available_cameras' not in st.session_state:
@@ -237,7 +249,7 @@ class Detection_UI:
 
         self.model = st.session_state['model']
         # Load trained model weights
-        self.model.load_model(model_path=abs_path("weights/yolov8s.pt", path_type="current"))
+        self.model.load_model(model_path=DEFAULT_WEIGHTS)
         # Reassign colors for model classes
         self.colors = [[random.randint(0, 255) for _ in range(3)] for _ in
                        range(len(self.model.names))]
@@ -272,14 +284,19 @@ class Detection_UI:
         # Model-type dropdown
         self.model_type = st.sidebar.selectbox("Select task type", ["Default task"])
         if self.model_type == "Default task":
-            self.model.load_model(model_path=abs_path("weights/yolov8n.pt", path_type="current"))
+            self.model.load_model(model_path=DEFAULT_WEIGHTS)
         elif self.model_type == "Task 1":
-            self.model.load_model(model_path=abs_path("weights/yolov8n.pt", path_type="current"))
+            self.model.load_model(model_path=DEFAULT_WEIGHTS)
         elif self.model_type == "Task 2":
-            self.model.load_model(model_path=abs_path("weights/yolov8n.pt", path_type="current"))
+            self.model.load_model(model_path=DEFAULT_WEIGHTS)
 
         # Choose default or custom model weights
-        model_file_option = st.sidebar.radio("Model Settings", ["Default", "Custom weights file"])
+        st.sidebar.markdown("**Model Settings**")
+        model_file_option = st.sidebar.radio(
+            "Model Settings",
+            ["Default", "Custom weights file"],
+            label_visibility="collapsed",
+        )
         if model_file_option == "Custom weights file":
             # Show a file uploader when custom weights are selected
             model_file = st.sidebar.file_uploader("Select .pt file", type="pt")
@@ -291,7 +308,7 @@ class Detection_UI:
                 self.colors = [[random.randint(0, 255) for _ in range(3)] for _ in
                                range(len(self.model.names))]
         elif model_file_option == "Default":
-            self.model.load_model(model_path=abs_path("weights/yolov8s-seg.pt", path_type="current"))
+            self.model.load_model(model_path=DEFAULT_WEIGHTS)
             # Reassign colors for model classes
             self.colors = [[random.randint(0, 255) for _ in range(3)] for _ in
                            range(len(self.model.names))]
@@ -402,7 +419,7 @@ class Detection_UI:
                         # Save detection result images
                         if detInfo:
                             file_name = abs_path(camera_savepath + '/' + str(current_frame + 1) + '.jpg', path_type="current")
-                            save_chinese_image(file_name, image)
+                            save_image(file_name, image)
                         #
                         # # Save detection result video
                         # out.write(image)
@@ -414,10 +431,10 @@ class Detection_UI:
                         resized_image = cv2.resize(image, (new_width, new_height))
                         resized_frame = cv2.resize(framecopy, (new_width, new_height))
                         if self.display_mode == "Overlay":
-                            self.image_placeholder.image(resized_image, channels="BGR", caption="Video")
+                            self.image_placeholder.image(resized_image, channels="BGR", use_container_width=True, caption="Video")
                         else:
-                            self.image_placeholder.image(resized_frame, channels="BGR", caption="Original")
-                            self.image_placeholder_res.image(resized_image, channels="BGR", caption="Detection")
+                            self.image_placeholder.image(resized_frame, channels="BGR", use_container_width=True, caption="Original")
+                            self.image_placeholder_res.image(resized_image, channels="BGR", use_container_width=True, caption="Detection")
 
                         self.logTable.add_frames(image, detInfo, cv2.resize(frame, (640, 640)))
 
@@ -458,12 +475,12 @@ class Detection_UI:
                 self.logTable.clear_frames()
                 self.progress_bar.progress(0)
                 # Display the uploaded image
-                source_img = self.uploaded_file.read()
+                source_img = self.uploaded_file.getvalue()
                 file_bytes = np.asarray(bytearray(source_img), dtype=np.uint8)
                 image_ini = cv2.imdecode(file_bytes, 1)
                 framecopy = image_ini.copy()
                 image, detInfo, select_info = self.frame_process(image_ini, self.uploaded_file.name)
-                save_chinese_image('./tempDir/' + self.uploaded_file.name, image)
+                save_image('./tempDir/' + self.uploaded_file.name, image)
                 # self.selectbox_placeholder = st.empty()
                 # self.selectbox_target = self.selectbox_placeholder.selectbox("Target filter", select_info, key="22113")
 
@@ -477,10 +494,10 @@ class Detection_UI:
                 resized_image = cv2.resize(image, (new_width, new_height))
                 resized_frame = cv2.resize(framecopy, (new_width, new_height))
                 if self.display_mode == "Overlay":
-                    self.image_placeholder.image(resized_image, channels="BGR", caption="Image")
+                    self.image_placeholder.image(resized_image, channels="BGR", use_container_width=True, caption="Image")
                 else:
-                    self.image_placeholder.image(resized_frame, channels="BGR", caption="Original")
-                    self.image_placeholder_res.image(resized_image, channels="BGR", caption="Detection")
+                    self.image_placeholder.image(resized_frame, channels="BGR", use_container_width=True, caption="Original")
+                    self.image_placeholder_res.image(resized_image, channels="BGR", use_container_width=True, caption="Detection")
 
                 self.logTable.add_frames(image, detInfo, cv2.resize(image_ini, (640, 640)))
                 self.progress_bar.progress(100)
@@ -542,7 +559,7 @@ class Detection_UI:
                                     formatted_time = time_obj.strftime("%H_%M_%S")
                                     file_name = abs_path(video_savepath + '/' + formatted_time  + '_' + str(current_frame) + '.jpg',
                                                          path_type="current")
-                                    save_chinese_image(file_name, image)
+                                    save_image(file_name, image)
 
                                 # # Save detection result video
                                 # out.write(image)
@@ -554,10 +571,10 @@ class Detection_UI:
                                 resized_image = cv2.resize(image, (new_width, new_height))
                                 resized_frame = cv2.resize(framecopy, (new_width, new_height))
                                 if self.display_mode == "Overlay":
-                                    self.image_placeholder.image(resized_image, channels="BGR", caption="Video")
+                                    self.image_placeholder.image(resized_image, channels="BGR", use_container_width=True, caption="Video")
                                 else:
-                                    self.image_placeholder.image(resized_frame, channels="BGR", caption="Original")
-                                    self.image_placeholder_res.image(resized_image, channels="BGR", caption="Detection")
+                                    self.image_placeholder.image(resized_frame, channels="BGR", use_container_width=True, caption="Original")
+                                    self.image_placeholder_res.image(resized_image, channels="BGR", use_container_width=True, caption="Detection")
 
                                 self.logTable.add_frames(image, detInfo, cv2.resize(frame, (640, 640)))
 
@@ -648,10 +665,10 @@ class Detection_UI:
 
             # Show overlay or side-by-side views
             if self.display_mode == "Overlay":
-                self.image_placeholder.image(resized_image, channels="BGR", caption="Detection")
+                self.image_placeholder.image(resized_image, channels="BGR", use_container_width=True, caption="Detection")
             else:
-                self.image_placeholder.image(resized_frame, channels="BGR", caption="Original")
-                self.image_placeholder_res.image(resized_image, channels="BGR", caption="Detection")
+                self.image_placeholder.image(resized_frame, channels="BGR", use_container_width=True, caption="Original")
+                self.image_placeholder_res.image(resized_image, channels="BGR", use_container_width=True, caption="Detection")
 
     def frame_process(self, image, file_name,video_time = None):
         """
@@ -715,13 +732,18 @@ class Detection_UI:
                     cnt += 1
 
                 # Show detections in the table
-                self.table_placeholder.table(res)
+                self.table_placeholder.dataframe(
+                    res,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.session_state["class_counts"] = self.detection_counts()
 
         return image, detInfo, select_info
 
     def frame_table_process(self, frame, caption):
         # Show the frame and update results
-        self.image_placeholder.image(frame, channels="BGR", caption=caption)
+        self.image_placeholder.image(frame, channels="BGR", use_container_width=True, caption=caption)
 
         # Update detection results
         detection_result = "None"
@@ -735,98 +757,172 @@ class Detection_UI:
         # Add a short delay
         cv2.waitKey(1)
 
+    def detection_counts(self):
+        """Count detected classes from the log table, last frame, or session."""
+        data = getattr(self.logTable, "data", None)
+        if data is not None and not data.empty:
+            column = next(
+                (col for col in data.columns if str(col).lower().startswith("recognition")),
+                None,
+            )
+            if column:
+                counts = {
+                    str(name): int(count)
+                    for name, count in data[column].value_counts().items()
+                    if str(name).strip() and str(name).strip().lower() != "none"
+                }
+                if counts:
+                    st.session_state["class_counts"] = counts
+                    return counts
+
+        counts = {}
+        for info in getattr(self.logTable, "saved_results", []) or []:
+            name = info[0] if info else None
+            if not name or str(name).strip().lower() == "none":
+                continue
+            key = str(name).strip()
+            counts[key] = counts.get(key, 0) + 1
+        if counts:
+            st.session_state["class_counts"] = counts
+            return counts
+
+        stored = st.session_state.get("class_counts") or {}
+        return {str(name): int(count) for name, count in stored.items() if int(count) > 0}
+
+    def show_preview_image(self):
+        """Show the latest detection, uploaded image, or placeholder."""
+        saved = getattr(self.logTable, "saved_images", None)
+        if saved:
+            self.image_placeholder.image(
+                saved[-1],
+                channels="BGR",
+                caption="Detection",
+                use_container_width=True,
+            )
+            return
+        if self.uploaded_file is not None:
+            self.image_placeholder.image(
+                self.uploaded_file,
+                caption="Uploaded",
+                use_container_width=True,
+            )
+            return
+        self.image_placeholder.image(
+            load_default_image(),
+            caption="Original",
+            use_container_width=True,
+        )
+        if self.display_mode == "Side by side" and self.image_placeholder_res is not None:
+            self.image_placeholder_res.image(
+                load_default_image(),
+                caption="Detection",
+                use_container_width=True,
+            )
+
+    def display_report_module(self):
+        """Build a waste inventory from detections and generate a local report."""
+        st.subheader("Waste Segmentation Report")
+        report_notes = st.text_area(
+            "Optional operator notes",
+            value="",
+            placeholder="Add inspection notes to include in the report.",
+        )
+
+        class_counts = self.detection_counts()
+        report_input = build_report_input(class_counts)
+        st.caption("Detected inventory: " + (", ".join(report_input) if report_input else "none yet"))
+
+        generate = st.button("Generate waste report", type="primary")
+        if generate:
+            if not class_counts and self.uploaded_file is not None:
+                self.process_camera_or_file()
+                class_counts = self.detection_counts()
+                report_input = build_report_input(class_counts)
+            if not class_counts:
+                st.warning("Upload an image, then click Start Detection.")
+            else:
+                try:
+                    st.session_state["waste_report"] = generate_waste_report(
+                        report_input,
+                        report_notes,
+                    )
+                    st.session_state["class_counts"] = class_counts
+                except Exception as exc:
+                    st.error(f"Report generation failed: {exc}")
+
+        if not class_counts:
+            st.info("Upload an image and click Start Detection. Then generate the report.")
+
+        if st.session_state.get("waste_report"):
+            report = st.session_state["waste_report"]
+            st.markdown(report)
+            st.download_button(
+                "Download report (Markdown)",
+                data=report,
+                file_name="waste_management_report.md",
+                mime="text/markdown",
+            )
+
     def setupMainWindow(self):
         """ Run the detection system. """
-        # st.title(self.title) # Show the system title
-        st.write("--------")
-        st.write("Image Segmentation Studio")
-        st.write("--------")
-        # Insert a divider
+        st.caption("Image Segmentation Studio")
 
-        # Create a column layout with the table on the right
-        col1, col2, col3 = st.columns([4, 1, 2])
+        left, right = st.columns([1.4, 1], gap="large")
 
-        # Display-mode selector in the first column
-        with col1:
-            self.display_mode = st.radio("Single / dual view", ["Overlay", "Side by side"])
-            # Create empty containers for video based on display mode
-            if self.display_mode == "Overlay":
-                self.image_placeholder = st.empty()
-                if not self.logTable.saved_images_ini:
-                    self.image_placeholder.image(load_default_image(), caption="Original")
-            else:
-                # "Dual view"
-                self.image_placeholder = st.empty()
-                self.image_placeholder_res = st.empty()
-                if not self.logTable.saved_images_ini:
-                    self.image_placeholder.image(load_default_image(), caption="Original")
-                    self.image_placeholder_res.image(load_default_image(), caption="Detection")
-            # Display progress bar
-            self.progress_bar = st.progress(0)
+        with left:
+            st.markdown("**View**")
+            self.display_mode = st.radio(
+                "View",
+                ["Overlay", "Side by side"],
+                horizontal=True,
+                label_visibility="collapsed",
+            )
+            run_button = st.button("Start Detection", type="primary", use_container_width=True)
+            self.close_placeholder = st.empty()
+            self.image_placeholder = st.empty()
+            self.image_placeholder_res = st.empty() if self.display_mode == "Side by side" else None
+            self.progress_bar = st.empty()
 
-        # Create an empty results table
-        res = concat_results("None", "[0, 0, 0, 0]", "0.00", "0.00s")
-
-        # Show the results table in the right column
-        with col3:
-            self.table_placeholder = st.empty()  # Place on the far right
-            self.table_placeholder.table(res)
-
-            # Create an export-results button
-            st.write("---------------------")
+        with right:
+            self.table_placeholder = st.empty()
             if st.button("Export results"):
                 self.logTable.save_to_csv()
-                if self.uploaded_video is None:
-                    name_in = None
-                else:
-                    name_in = self.uploaded_video.name
-                res = self.logTable.save_frames_file(fps=self.FPS, video_name=name_in)
+                name_in = None if self.uploaded_video is None else self.uploaded_video.name
+                saved = self.logTable.save_frames_file(fps=self.FPS, video_name=name_in)
                 st.write("Recognition results saved to: " + self.saved_log_data)
-                if res:
-                    st.write(f"Target result file saved: {res}")
-                self.logTable.clear_data()
-            # Show the full results table
+                if saved:
+                    st.write(f"Target result file saved: {saved}")
             self.log_table_placeholder = st.empty()
+
+        progress = self.progress_bar.progress(0)
+        self.progress_bar = progress
+
+        if run_button:
+            st.session_state["waste_report"] = None
+            self.process_camera_or_file()
+            st.session_state["class_counts"] = self.detection_counts()
+        else:
+            self.show_preview_image()
+            current = self.logTable.data
+            if current is not None and not current.empty:
+                self.table_placeholder.dataframe(
+                    current.head(8),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                self.table_placeholder.info("No detections yet. Click Start Detection.")
             self.logTable.update_table(self.log_table_placeholder)
 
-        # Empty stop-button placeholder in this column
-        with col2:
-            st.write("")
-            self.close_placeholder = st.empty()
-
-        # Target filter in the second column
-        # with col2:
-        # self.selectbox_placeholder = st.empty()
-        # detected_targets = ["All targets"] # Initialize the target list
-        #
-        # Iterate and show detections
-        # for i, info in enumerate(self.logTable.saved_results):
-        # name, bbox, conf, use_time, cls_id = info
-        # detected_targets.append(name + "-" + str(i))
-        # self.selectbox_target = self.selectbox_placeholder.selectbox("Target filter", detected_targets)
-        #
-        # Handle target-filter selection
-        # for i, info in enumerate(self.logTable.saved_results):
-        # name, bbox, conf, use_time, cls_id = info
-        # if self.selectbox_target == name + "-" + str(i):
-        # self.toggle_comboBox(i)
-        # elif self.selectbox_target == "All targets":
-        # self.toggle_comboBox(-1)
-
-        with col2:
-            st.write("")
-            run_button = st.button("Start Detection")
-            if run_button:
-                self.process_camera_or_file()  # Run camera or file processing
-            else:
-                # Show the default image if none has been saved
-                if not self.logTable.saved_images_ini:
-                    self.image_placeholder.image(load_default_image(), caption="Original")
-                    if self.display_mode == "Side by side":
-                        self.image_placeholder_res.image(load_default_image(), caption="Detection")
+        self.display_report_module()
 
 
 # Instantiate and run the app
 if __name__ == "__main__":
+    st.set_page_config(
+        page_title="Waste Segmentation",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     app = Detection_UI()
     app.setupMainWindow()

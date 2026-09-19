@@ -4,7 +4,11 @@
 
 # Python
 venv/
+venv 2/
 .venv/
+
+# Local trial copy — never publish
+code 2/
 __pycache__/
 *.py[cod]
 *.egg-info/
