@@ -7,7 +7,7 @@ from PIL import Image
 import numpy as np
 from datetime import datetime
 
-def save_chinese_image(file_path, image_array):
+def save_image(file_path, image_array):
     """
     Save an image that may contain Unicode characters in the path.
 
@@ -143,7 +143,7 @@ class LogTable:
                 #         for imgid in range(len(self.saved_target_images)):
                 #             file_name = abs_path(camera_savepath + '/' + str(imgid + 1) + '.jpg', path_type="current")
                 #             # cv2.imwrite(file_name, self.saved_target_images[imgid])
-                #             save_chinese_image(file_name, self.saved_target_images[imgid])
+                #             save_image(file_name, self.saved_target_images[imgid])
                 #     except:
                 #         pass
                 # else:
@@ -160,7 +160,7 @@ class LogTable:
                 #             formatted_time = time_obj.strftime("%H_%M_%S")
                 #             file_name = abs_path(video_savepath + '/' + formatted_time + '_' + str(imgid + 1) + '.jpg', path_type="current")
                 #             # cv2.imwrite(file_name, self.saved_target_images[imgid])
-                #             save_chinese_image(file_name, self.saved_target_images[imgid])
+                #             save_image(file_name, self.saved_target_images[imgid])
                 #     except:
                 #         pass
 
@@ -218,4 +218,8 @@ class LogTable:
             # Otherwise show all data
             display_data = self.data
 
-        log_table_placeholder.table(display_data)
+        log_table_placeholder.dataframe(
+            display_data,
+            use_container_width=True,
+            hide_index=True,
+        )

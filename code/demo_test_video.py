@@ -4,7 +4,7 @@ import numpy as np
 from PIL import ImageFont, ImageDraw, Image
 from hashlib import md5
 from model import Web_Detector
-from chinese_name_list import Label_list
+from class_name_list import Label_list
 
 def generate_color_based_on_name(name):
     # Generate a stable color from a name hash
@@ -17,7 +17,7 @@ def calculate_polygon_area(points):
     return cv2.contourArea(points.astype(np.float32))
 
 
-def draw_with_chinese(image, text, position, font_size=20, color=(255, 0, 0)):
+def draw_label(image, text, position, font_size=20, color=(255, 0, 0)):
     image_pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(image_pil)
     font = ImageFont.truetype("simsun.ttc", font_size, encoding="unic")
@@ -39,7 +39,7 @@ def draw_detections(image, info, alpha=0.2):
         x1, y1, x2, y2 = bbox
         aim_frame_area = (x2 - x1) * (y2 - y1)
         cv2.rectangle(image, (x1, y1), (x2, y2), color=(0, 0, 255), thickness=int(3 * adjust_param))
-        image = draw_with_chinese(image, name, (x1, y1 - int(30 * adjust_param)), font_size=int(35 * adjust_param))
+        image = draw_label(image, name, (x1, y1 - int(30 * adjust_param)), font_size=int(35 * adjust_param))
         y_offset = int(50 * adjust_param)  # Leave space below the class label
     else:
         mask_points = np.concatenate(mask)
@@ -66,14 +66,14 @@ def draw_detections(image, info, alpha=0.2):
 
             # Draw class name
             x, y = np.min(mask_points, axis=0).astype(int)
-            image = draw_with_chinese(image, name, (x, y - int(30 * adjust_param)), font_size=int(35 * adjust_param))
+            image = draw_label(image, name, (x, y - int(30 * adjust_param)), font_size=int(35 * adjust_param))
             y_offset = int(50 * adjust_param)  # Leave space below the class label
 
             # Draw area, perimeter, circularity, and color
             metrics = [("Area", area), ("Perimeter", perimeter), ("Circularity", circularity), ("Color", color_str)]
             for idx, (metric_name, metric_value) in enumerate(metrics):
                 text = f"{metric_name}: {metric_value}"
-                image = draw_with_chinese(image, text, (x, y - y_offset - spacing * (idx + 1)),
+                image = draw_label(image, text, (x, y - y_offset - spacing * (idx + 1)),
                                           font_size=int(35 * adjust_param))
 
         except Exception as e:

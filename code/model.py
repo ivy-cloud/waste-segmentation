@@ -2,7 +2,7 @@
 import cv2  # OpenCV for image/video processing
 import torch
 from QtFusion.models import Detector, HeatmapGenerator  # Detector base class from QtFusion
-from chinese_name_list import Chinese_name  # Optional display-name mapping for classes
+from class_name_list import Class_names  # Optional display-name mapping for classes
 from ultralytics import YOLO  # YOLO model loader
 from ultralytics.utils.torch_utils import select_device  # Device selection helper
 import os
@@ -42,7 +42,7 @@ class Web_Detector(Detector):  # YOLO detector used by the web UI
         super().__init__(params)  # Initialize base Detector
         self.model = None
         self.img = None  # Current image
-        self.names = list(Chinese_name.values())  # Display names
+        self.names = list(Class_names.values())  # Display names
         self.params = params if params else ini_params  # Runtime params
 
     def load_model(self, model_path):  # Load YOLO weights
@@ -55,7 +55,7 @@ class Web_Detector(Detector):  # YOLO detector used by the web UI
         self.model = YOLO(model_path, task=task)
         names_dict = self.model.names  # Model class-name dict
         # Map to display names when available; otherwise keep original English labels
-        self.names = [Chinese_name[v] if v in Chinese_name else v for v in names_dict.values()]
+        self.names = [Class_names[v] if v in Class_names else v for v in names_dict.values()]
         self.model(
             torch.zeros(1, 3, *[self.imgsz] * 2).to(self.device).type_as(next(self.model.model.parameters()))
         )  # Warmup
